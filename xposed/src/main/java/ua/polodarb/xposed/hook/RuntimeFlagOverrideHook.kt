@@ -22,18 +22,20 @@ internal class RuntimeFlagOverrideHook(
     private val context: Context,
     private val lpparam: XC_LoadPackage.LoadPackageParam,
     private val runtimeClassLoader: ClassLoader,
+    private val runtimeDirectories: List<File>,
     private val diagnostics: HookDiagnostics = HookDiagnostics.None,
 ) {
 
     private val overrideStore = RuntimeFlagOverrideStore(
-        File(File(context.dataDir, XposedConstants.XPOSED_DIR), XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
+        runtimeDirectories.map { directory ->
+            File(directory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
+        }
     )
 
     val overridesPaused: Boolean
-        get() = File(
-            File(context.dataDir, XposedConstants.XPOSED_DIR),
-            XposedConstants.OVERRIDES_PAUSED_FILE_NAME,
-        ).isFile
+        get() = runtimeDirectories.any { directory ->
+            File(directory, XposedConstants.OVERRIDES_PAUSED_FILE_NAME).isFile
+        }
 
     fun hasOverrides(): Boolean = overrideStore.hasOverrides()
     fun overrideCount(): Int = overrideStore.overrideCount()

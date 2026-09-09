@@ -3,15 +3,16 @@ package ua.polodarb.gmsflags.data.phenotype.root.diagnostic
 import android.content.pm.PackageManager
 import java.io.File
 import java.io.RandomAccessFile
-import ua.polodarb.xposed.info.XposedConstants
+import ua.polodarb.xposed.info.XposedRuntimeLocations
 
 /**
  * Reads the Xposed module's log files from a target app's data dir. The module writes them into
- * `<targetApp.dataDir>/<XposedConstants.XPOSED_DIR>/logs/` as `<name>_xposed.log` files (inside the
- * TARGET app's data dir, so cross-uid - this runs in the root service). Files are concatenated
- * newest-first and the
- * total is capped to stay well under the binder transaction limit. Never throws: any failure (no
- * app, no dir, no logs, unreadable file) yields an empty string.
+ * `<runtimeDirectory>/logs/` as `<name>_xposed.log` files (inside the TARGET app's data dir, so
+ * cross-uid - this runs in the root service). Every runtime directory is read, since the module
+ * logs into device-protected storage while earlier versions logged into credential-protected
+ * storage. Files are concatenated newest-first and the total is capped to stay well under the
+ * binder transaction limit. Never throws: any failure (no app, no dir, no logs, unreadable file)
+ * yields an empty string.
  */
 internal class XposedLogsReader(
     private val packageManager: PackageManager,
@@ -20,12 +21,15 @@ internal class XposedLogsReader(
         val dataDirectory = runCatching {
             packageManager.getApplicationInfo(androidPackageName, 0).dataDir
         }.getOrNull() ?: return ""
-        val logsDirectory = File(File(dataDirectory, XposedConstants.XPOSED_DIR), LOGS_DIR)
-        val logFiles = runCatching {
-            logsDirectory.listFiles { file ->
-                file.isFile && file.name.endsWith(LOG_FILE_SUFFIX)
+        val logFiles = XposedRuntimeLocations.runtimeDirectories(dataDirectory)
+            .flatMap { runtimeDirectory ->
+                runCatching {
+                    File(runtimeDirectory, LOGS_DIR).listFiles { file ->
+                        file.isFile && file.name.endsWith(LOG_FILE_SUFFIX)
+                    }
+                }.getOrNull()?.toList().orEmpty()
             }
-        }.getOrNull()?.sortedByDescending(File::lastModified).orEmpty()
+            .sortedByDescending(File::lastModified)
         if (logFiles.isEmpty()) return ""
 
         val builder = StringBuilder()

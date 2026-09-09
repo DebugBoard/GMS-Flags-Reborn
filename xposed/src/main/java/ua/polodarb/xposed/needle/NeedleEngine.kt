@@ -41,6 +41,7 @@ internal object NeedleEngine {
         classLoader: ClassLoader,
         moduleApkPath: String?,
         trustedPublicKeyBase64: String?,
+        runtimeDirectories: List<File>,
     ) {
         if (trustedPublicKeyBase64.isNullOrBlank()) {
             XposedLogger.logW(
@@ -49,14 +50,14 @@ internal object NeedleEngine {
             return
         }
 
-        val runtimeDirectory = File(lpparam.appInfo.dataDir, XposedConstants.XPOSED_DIR)
-        val envelopes = NeedleRecipeStore(runtimeDirectory).findForPackage(lpparam.packageName)
+        val overrideDatabases = runtimeDirectories.map { directory ->
+            File(directory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
+        }
+        val envelopes = NeedleRecipeStore(overrideDatabases).findForPackage(lpparam.packageName)
         if (envelopes.isEmpty()) return
 
         val apkPath = lpparam.appInfo.sourceDir ?: return
-        val overrideStore = RuntimeFlagOverrideStore(
-            File(runtimeDirectory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME),
-        )
+        val overrideStore = RuntimeFlagOverrideStore(overrideDatabases)
         val appContext = resolveSystemContext()
         val versionCode = resolveVersionCode(appContext, lpparam.packageName)
 

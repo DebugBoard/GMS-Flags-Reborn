@@ -6,6 +6,7 @@ import io.requery.android.database.sqlite.SQLiteDatabase
 import java.io.File
 import ua.polodarb.gmsflags.data.phenotype.runtime.RuntimeFlagOverrideStore
 import ua.polodarb.xposed.info.XposedConstants
+import ua.polodarb.xposed.info.XposedRuntimeLocations
 
 internal class OverrideRuntimeController(
     private val packageManager: PackageManager,
@@ -13,8 +14,10 @@ internal class OverrideRuntimeController(
 ) {
     fun readOverrideCount(androidPackageNames: List<String>): Int =
         targets(androidPackageNames).sumOf { target ->
-            val databaseFile = File(target.runtimeDirectory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
-            if (!databaseFile.isFile) return@sumOf 0
+            val databaseFile = target
+                .runtimeFiles(XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
+                .firstOrNull(File::isFile)
+                ?: return@sumOf 0
             runCatching {
                 SQLiteDatabase.openDatabase(
                     databaseFile.path,
@@ -32,23 +35,25 @@ internal class OverrideRuntimeController(
     fun readPaused(androidPackageNames: List<String>): Boolean {
         val targets = targets(androidPackageNames)
         return targets.isNotEmpty() && targets.all { target ->
-            File(target.runtimeDirectory, XposedConstants.OVERRIDES_PAUSED_FILE_NAME).isFile
+            target.pauseMarkers().any(File::isFile)
         }
     }
 
     fun setPaused(androidPackageNames: List<String>, paused: Boolean) {
         targets(androidPackageNames).forEach { target ->
-            val marker = File(target.runtimeDirectory, XposedConstants.OVERRIDES_PAUSED_FILE_NAME)
             if (paused) {
-                target.runtimeDirectory.mkdirs()
+                val directory = target.runtimeDirectories.firstOrNull() ?: return@forEach
+                val marker = File(directory, XposedConstants.OVERRIDES_PAUSED_FILE_NAME)
+                directory.mkdirs()
                 marker.writeText("paused")
-                Os.chown(target.runtimeDirectory.path, target.uid, target.uid)
-                Os.chmod(target.runtimeDirectory.path, MODE_OWNER_DIRECTORY)
+                Os.chown(directory.path, target.uid, target.uid)
+                Os.chmod(directory.path, MODE_OWNER_DIRECTORY)
                 Os.chown(marker.path, target.uid, target.uid)
                 Os.chmod(marker.path, MODE_OWNER_FILE)
-                restoreContext(target.runtimeDirectory, marker)
+                restoreContext(directory, marker)
             } else {
-                marker.delete()
+                // Every location, so a marker left by an earlier version cannot keep the hook off.
+                target.pauseMarkers().forEach(File::delete)
             }
         }
     }
@@ -67,7 +72,7 @@ internal class OverrideRuntimeController(
                 Target(
                     packageName = packageName,
                     uid = info.uid,
-                    runtimeDirectory = File(info.dataDir, XposedConstants.XPOSED_DIR),
+                    runtimeDirectories = XposedRuntimeLocations.runtimeDirectories(info.dataDir),
                 )
             }.getOrNull()
         }
@@ -83,8 +88,14 @@ internal class OverrideRuntimeController(
     private data class Target(
         val packageName: String,
         val uid: Int,
-        val runtimeDirectory: File,
-    )
+        val runtimeDirectories: List<File>,
+    ) {
+        fun runtimeFiles(fileName: String): List<File> =
+            runtimeDirectories.map { directory -> File(directory, fileName) }
+
+        fun pauseMarkers(): List<File> =
+            runtimeFiles(XposedConstants.OVERRIDES_PAUSED_FILE_NAME)
+    }
 
     private companion object {
         const val MODE_OWNER_DIRECTORY = 448

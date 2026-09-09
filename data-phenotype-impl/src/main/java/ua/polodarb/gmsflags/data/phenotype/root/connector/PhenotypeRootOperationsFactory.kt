@@ -7,7 +7,10 @@ import ua.polodarb.gmsflags.data.phenotype.root.flags.OverrideRuntimeController
 import ua.polodarb.gmsflags.data.phenotype.root.flags.PhenotypeFlagStore
 import ua.polodarb.gmsflags.data.phenotype.root.hooks.HookDiagnosticsReader
 import ua.polodarb.gmsflags.data.phenotype.root.hooks.MicroHookStore
+import ua.polodarb.gmsflags.data.phenotype.runtime.AndroidRuntimeDirectoryLocator
+import ua.polodarb.gmsflags.data.phenotype.runtime.AndroidRuntimeOverrideFileAccess
 import ua.polodarb.gmsflags.data.phenotype.runtime.RuntimeFlagOverrideStore
+import ua.polodarb.gmsflags.data.phenotype.runtime.RuntimeStateMigrator
 import ua.polodarb.gmsflags.data.phenotype.sqlite.CompositePhenotypeDatabaseReader
 import ua.polodarb.gmsflags.data.phenotype.sqlite.PhenotypeDatabasePaths
 import ua.polodarb.gmsflags.data.phenotype.sqlite.RoutedPhenotypeFlagReader
@@ -19,6 +22,13 @@ internal class PhenotypeRootOperationsFactory(
     private val context: Context,
 ) {
     fun create(): PhenotypeRootOperations {
+        // Runs before anything reads the runtime state, so existing installs keep their overrides
+        // once the state moves to storage a target can read before the first unlock after a boot.
+        RuntimeStateMigrator(
+            directoryLocator = AndroidRuntimeDirectoryLocator(context.packageManager),
+            fileAccess = AndroidRuntimeOverrideFileAccess(context.packageManager),
+        ).migrate(XposedTargets.supportedApplicationPackageNames())
+
         val gmsPackageReader = SqlitePhenotypeDatabaseReader(PhenotypeDatabasePaths.GMS)
         val vendingPackageReader = SqlitePhenotypeDatabaseReader(PhenotypeDatabasePaths.VENDING)
         val gmsFlagReader = SqlitePhenotypeFlagDatabaseReader(PhenotypeDatabasePaths.GMS)

@@ -3,17 +3,30 @@ package ua.polodarb.gmsflags.data.phenotype.runtime
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class RuntimeFlagOverrideStoreTest {
-    private val file = File("runtime-overrides.db")
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    private val primaryFile = File("device-protected/runtime-overrides.db")
+    private val legacyFile = File("credential-protected/runtime-overrides.db")
     private val database = FakeDatabase()
     private val access = FakeFileAccess()
     private val store = RuntimeFlagOverrideStore(
         database = database,
-        locator = RuntimeOverrideDatabaseLocator { file },
+        locator = RuntimeOverrideDatabaseLocator { listOf(primaryFile, legacyFile) },
         fileAccess = access,
     )
+
+    @Test
+    fun `overrides are written to the primary database only`() {
+        store.write("android", "phenotype", listOf(RuntimeFlagOverride("phenotype", "flag", 0, "1")))
+
+        assertEquals(listOf(primaryFile), database.writtenFiles)
+    }
 
     @Test
     fun `restores file context only on first write for target`() {
@@ -35,46 +48,90 @@ class RuntimeFlagOverrideStoreTest {
     }
 
     @Test
-    fun `delete all clears the runtime database and preserves file ownership`() {
+    fun `delete all clears every runtime database and preserves file ownership`() {
         store.deleteAll("android")
 
-        assertEquals(listOf(file), database.deleteAllFiles)
-        assertEquals(listOf(false), access.restoreContextCalls)
+        assertEquals(listOf(primaryFile, legacyFile), database.deleteAllFiles)
+        assertEquals(listOf(false, false), access.restoreContextCalls)
+    }
+
+    @Test
+    fun `deleting an override reaches the database written by an earlier version`() {
+        store.delete("android", "phenotype", "flag")
+
+        assertEquals(listOf(primaryFile, legacyFile), database.deletedFiles)
+    }
+
+    @Test
+    fun `reads fall back to the database written by an earlier version`() {
+        val legacy = temporaryFolder.newFile("legacy-runtime-overrides.db")
+        val missingPrimary = File(temporaryFolder.root, "runtime-overrides.db")
+        val fallbackStore = RuntimeFlagOverrideStore(
+            database = database,
+            locator = RuntimeOverrideDatabaseLocator { listOf(missingPrimary, legacy) },
+            fileAccess = access,
+        )
+
+        fallbackStore.read("android", "phenotype")
+
+        assertEquals(listOf(legacy), database.readFiles)
     }
 
     private class FakeDatabase : RuntimeOverrideDatabase {
         var deleteResult = true
+        val readFiles = mutableListOf<File>()
+        val writtenFiles = mutableListOf<File>()
+        val deletedFiles = mutableListOf<File>()
         val deleteAllFiles = mutableListOf<File>()
 
-        override fun read(file: File, phenotypePackageName: String) = emptyList<RuntimeFlagOverride>()
+        override fun read(file: File, phenotypePackageName: String): List<RuntimeFlagOverride> {
+            readFiles += file
+            return emptyList()
+        }
+
         override fun write(
             file: File,
             phenotypePackageName: String,
             overrides: List<RuntimeFlagOverride>,
-        ) = Unit
+        ) {
+            writtenFiles += file
+        }
 
         override fun writeMicroHooks(
             file: File,
             androidPackageName: String,
             hooks: List<RuntimeMicroHookOverride>,
-        ) = Unit
+        ) {
+            writtenFiles += file
+        }
 
-        override fun delete(file: File, phenotypePackageName: String, flagName: String) =
-            deleteResult
+        override fun delete(file: File, phenotypePackageName: String, flagName: String): Boolean {
+            deletedFiles += file
+            return deleteResult
+        }
 
         override fun delete(
             file: File,
             phenotypePackageName: String,
             flagNames: List<String>,
-        ) = deleteResult
+        ): Boolean {
+            deletedFiles += file
+            return deleteResult
+        }
 
-        override fun deletePackage(file: File, phenotypePackageName: String) = deleteResult
+        override fun deletePackage(file: File, phenotypePackageName: String): Boolean {
+            deletedFiles += file
+            return deleteResult
+        }
 
         override fun deleteMicroHooks(
             file: File,
             androidPackageName: String,
             recipeIds: List<Long>,
-        ) = deleteResult
+        ): Boolean {
+            deletedFiles += file
+            return deleteResult
+        }
 
         override fun deleteAll(file: File): Boolean {
             deleteAllFiles += file

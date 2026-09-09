@@ -6,12 +6,21 @@ import ua.polodarb.xposed.info.phenotypePackageCandidates
 import java.io.File
 import ua.polodarb.xposed.logging.XposedLogger
 
+/**
+ * Reads the overrides written by the app.
+ *
+ * [dbFiles] holds every location the database can live in, the primary one first: a target that
+ * starts before the first unlock after a reboot only sees the copy in device-protected storage,
+ * while state written by earlier versions of the app still lives in credential-protected storage.
+ * The candidates are re-checked on every refresh, so the store also picks up the primary copy as
+ * soon as it appears.
+ */
 internal class RuntimeFlagOverrideStore(
-    private val dbFile: File
+    private val dbFiles: List<File>
 ) {
 
     @Volatile
-    private var snapshot = Snapshot(Long.MIN_VALUE, emptyMap())
+    private var snapshot = Snapshot(null, Long.MIN_VALUE, emptyMap())
 
     fun find(packageName: String, flagName: String): Override? =
         overrides()[Key(packageName, flagName)]
@@ -68,24 +77,30 @@ internal class RuntimeFlagOverrideStore(
             .joinToString(prefix = "[", postfix = "]") { (packageName, count) ->
                 "$packageName($count)"
             }
-        return "path=${dbFile.path}, exists=${dbFile.isFile}, count=${overrides.size}, " +
-            "packages=$packages"
+        val paths = dbFiles.joinToString(prefix = "[", postfix = "]") { file ->
+            "${file.path}(exists=${file.isFile})"
+        }
+        return "paths=$paths, count=${overrides.size}, packages=$packages"
     }
 
     private fun overrides(): Map<Key, Override> {
-        val modifiedAt = dbFile.takeIf { it.isFile }?.lastModified() ?: Long.MIN_VALUE
+        val dbFile = dbFiles.firstOrNull(File::isFile)
+        val modifiedAt = dbFile?.lastModified() ?: Long.MIN_VALUE
         val current = snapshot
-        if (modifiedAt == current.modifiedAt) return current.overrides
+        if (dbFile?.path == current.path && modifiedAt == current.modifiedAt) {
+            return current.overrides
+        }
 
         val refreshed = Snapshot(
+            path = dbFile?.path,
             modifiedAt = modifiedAt,
-            overrides = if (modifiedAt == Long.MIN_VALUE) emptyMap() else readOverrides(),
+            overrides = dbFile?.let(::readOverrides).orEmpty(),
         )
         snapshot = refreshed
         return refreshed.overrides
     }
 
-    private fun readOverrides(): Map<Key, Override> {
+    private fun readOverrides(dbFile: File): Map<Key, Override> {
         val result = linkedMapOf<Key, Override>()
         val db = runCatching {
             SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
@@ -136,6 +151,7 @@ internal class RuntimeFlagOverrideStore(
     )
 
     private data class Snapshot(
+        val path: String?,
         val modifiedAt: Long,
         val overrides: Map<Key, Override>,
     )

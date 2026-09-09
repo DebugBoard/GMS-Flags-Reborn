@@ -8,6 +8,7 @@ import ua.polodarb.gmsflags.data.phenotype.root.parcel.HookDiagnosticSnapshotPar
 import ua.polodarb.gmsflags.data.phenotype.root.parcel.HookStrategyDiagnosticParcel
 import ua.polodarb.xposed.info.HookDiagnosticContract
 import ua.polodarb.xposed.info.XposedConstants
+import ua.polodarb.xposed.info.XposedRuntimeLocations
 
 internal class HookDiagnosticsReader(
     private val packageManager: PackageManager,
@@ -26,14 +27,12 @@ internal class HookDiagnosticsReader(
                 add(HookDiagnosticContract.COMPATIBILITY_WARNING_PAIRIP_CORE)
             }
         }
-        val runtimeDirectory = File(dataDirectory, XposedConstants.XPOSED_DIR)
+        val runtimeDirectories = XposedRuntimeLocations.runtimeDirectories(dataDirectory)
         val overrideCount = readOverrideCount(
-            File(runtimeDirectory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
+            runtimeDirectories.firstExisting(XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
         )
-        val diagnosticsFile = File(
-            runtimeDirectory,
-            XposedConstants.HOOK_DIAGNOSTICS_DB_FILE_NAME,
-        )
+        val diagnosticsFile =
+            runtimeDirectories.firstExisting(XposedConstants.HOOK_DIAGNOSTICS_DB_FILE_NAME)
         val session = readLatestSession(
             file = diagnosticsFile,
             mainProcessName = androidPackageName,
@@ -62,7 +61,11 @@ internal class HookDiagnosticsReader(
         }
     }
 
-    private fun readOverrideCount(file: File): Int = readDatabase(file) { database ->
+    /** Device-protected storage first, then the location earlier versions wrote to. */
+    private fun List<File>.firstExisting(fileName: String): File? =
+        map { directory -> File(directory, fileName) }.firstOrNull(File::isFile)
+
+    private fun readOverrideCount(file: File?): Int = readDatabase(file) { database ->
         database.rawQuery(
             "SELECT COUNT(*) FROM ${XposedConstants.RUNTIME_OVERRIDES_TABLE}",
             null,
@@ -70,7 +73,7 @@ internal class HookDiagnosticsReader(
     } ?: 0
 
     private fun readLatestSession(
-        file: File,
+        file: File?,
         mainProcessName: String,
     ): SessionRow? = readDatabase(file) { database ->
         database.rawQuery(
@@ -97,7 +100,7 @@ internal class HookDiagnosticsReader(
         }
     }
 
-    private fun readStrategies(file: File, sessionId: String): List<HookStrategyDiagnosticParcel> =
+    private fun readStrategies(file: File?, sessionId: String): List<HookStrategyDiagnosticParcel> =
         readDatabase(file) { database ->
             database.rawQuery(
                 """
@@ -124,8 +127,8 @@ internal class HookDiagnosticsReader(
             }
         }.orEmpty()
 
-    private fun <T> readDatabase(file: File, block: (SQLiteDatabase) -> T): T? {
-        if (!file.isFile) return null
+    private fun <T> readDatabase(file: File?, block: (SQLiteDatabase) -> T): T? {
+        if (file == null || !file.isFile) return null
         return runCatching {
             SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use(block)
         }.getOrNull()
