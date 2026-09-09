@@ -20,7 +20,7 @@ class PhenotypeFlagStoreTest {
     private val database = FakeDatabase()
     private val overrideStore = RuntimeFlagOverrideStore(
         database = database,
-        locator = RuntimeOverrideDatabaseLocator { file },
+        locator = RuntimeOverrideDatabaseLocator { listOf(file) },
         fileAccess = object : RuntimeOverrideFileAccess {
             override fun prepare(
                 androidPackageName: String,

@@ -17,8 +17,13 @@ internal object MendelRuntimeHookInstaller {
     fun supports(packageName: String, processName: String?): Boolean =
         packageName == processName && XposedTargets.isMendelApplication(packageName)
 
+    /**
+     * @param runtimeDirectories every directory the overrides can live in, primary one first.
+     * @param writableRuntimeDirectory the directory diagnostics are written to.
+     */
     fun install(
-        runtimeDirectory: File,
+        runtimeDirectories: List<File>,
+        writableRuntimeDirectory: File,
         lpparam: XC_LoadPackage.LoadPackageParam,
         classLoader: ClassLoader,
         moduleApkPath: String?,
@@ -29,11 +34,13 @@ internal object MendelRuntimeHookInstaller {
         }
 
         val overrideStore = RuntimeFlagOverrideStore(
-            File(runtimeDirectory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME),
+            runtimeDirectories.map { directory ->
+                File(directory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
+            },
         )
         val diagnostics = SqliteHookDiagnostics(
             databaseFile = File(
-                runtimeDirectory,
+                writableRuntimeDirectory,
                 XposedConstants.HOOK_DIAGNOSTICS_DB_FILE_NAME,
             ),
             packageName = lpparam.packageName,
@@ -42,7 +49,10 @@ internal object MendelRuntimeHookInstaller {
         )
         diagnostics.start(overrideStore.overrideCount())
 
-        if (File(runtimeDirectory, XposedConstants.OVERRIDES_PAUSED_FILE_NAME).isFile) {
+        val paused = runtimeDirectories.any { directory ->
+            File(directory, XposedConstants.OVERRIDES_PAUSED_FILE_NAME).isFile
+        }
+        if (paused) {
             diagnostics.paused()
             XposedLogger.logI(
                 "Skipping Mendel flag override hook: overrides are paused for ${lpparam.packageName}"

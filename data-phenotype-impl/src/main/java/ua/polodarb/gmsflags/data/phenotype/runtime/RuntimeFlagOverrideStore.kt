@@ -1,6 +1,7 @@
 package ua.polodarb.gmsflags.data.phenotype.runtime
 
 import android.content.Context
+import java.io.File
 
 internal data class RuntimeFlagOverride(
     val packageName: String,
@@ -17,6 +18,13 @@ internal data class RuntimeMicroHookOverride(
     val required: Boolean,
 )
 
+/**
+ * Reads and writes the runtime state the Xposed module picks up inside every target app.
+ *
+ * Overrides are written to the primary location only - device-protected storage, so a target that
+ * starts before the first unlock after a reboot can read them - while reads fall back to, and
+ * deletes cover, the locations used by earlier versions.
+ */
 internal class RuntimeFlagOverrideStore(
     private val database: RuntimeOverrideDatabase,
     private val locator: RuntimeOverrideDatabaseLocator,
@@ -33,10 +41,10 @@ internal class RuntimeFlagOverrideStore(
     fun read(
         androidPackageName: String,
         phenotypePackageName: String,
-    ): List<RuntimeFlagOverride> = database.read(
-        file = locator.locate(androidPackageName),
-        phenotypePackageName = phenotypePackageName,
-    )
+    ): List<RuntimeFlagOverride> {
+        val file = readableFile(androidPackageName) ?: return emptyList()
+        return database.read(file = file, phenotypePackageName = phenotypePackageName)
+    }
 
     fun write(
         androidPackageName: String,
@@ -44,7 +52,7 @@ internal class RuntimeFlagOverrideStore(
         overrides: List<RuntimeFlagOverride>,
     ) {
         if (overrides.isEmpty()) return
-        val file = locator.locate(androidPackageName)
+        val file = primaryFile(androidPackageName) ?: return
         database.write(file, phenotypePackageName, overrides)
         fileAccess.prepare(
             androidPackageName = androidPackageName,
@@ -58,7 +66,7 @@ internal class RuntimeFlagOverrideStore(
         hooks: List<RuntimeMicroHookOverride>,
     ) {
         if (hooks.isEmpty()) return
-        val file = locator.locate(androidPackageName)
+        val file = primaryFile(androidPackageName) ?: return
         database.writeMicroHooks(file, androidPackageName, hooks)
         fileAccess.prepare(
             androidPackageName = androidPackageName,
@@ -71,10 +79,8 @@ internal class RuntimeFlagOverrideStore(
         androidPackageName: String,
         phenotypePackageName: String,
         flagName: String,
-    ) {
-        val file = locator.locate(androidPackageName)
-        if (!database.delete(file, phenotypePackageName, flagName)) return
-        fileAccess.prepare(androidPackageName, file, restoreContext = false)
+    ) = editEveryFile(androidPackageName) { file ->
+        database.delete(file, phenotypePackageName, flagName)
     }
 
     fun delete(
@@ -83,18 +89,16 @@ internal class RuntimeFlagOverrideStore(
         flagNames: List<String>,
     ) {
         if (flagNames.isEmpty()) return
-        val file = locator.locate(androidPackageName)
-        if (!database.delete(file, phenotypePackageName, flagNames)) return
-        fileAccess.prepare(androidPackageName, file, restoreContext = false)
+        editEveryFile(androidPackageName) { file ->
+            database.delete(file, phenotypePackageName, flagNames)
+        }
     }
 
     fun deletePackage(
         androidPackageName: String,
         phenotypePackageName: String,
-    ) {
-        val file = locator.locate(androidPackageName)
-        if (!database.deletePackage(file, phenotypePackageName)) return
-        fileAccess.prepare(androidPackageName, file, restoreContext = false)
+    ) = editEveryFile(androidPackageName) { file ->
+        database.deletePackage(file, phenotypePackageName)
     }
 
     fun deleteMicroHooks(
@@ -102,14 +106,31 @@ internal class RuntimeFlagOverrideStore(
         recipeIds: List<Long>,
     ) {
         if (recipeIds.isEmpty()) return
-        val file = locator.locate(androidPackageName)
-        if (!database.deleteMicroHooks(file, androidPackageName, recipeIds)) return
-        fileAccess.prepare(androidPackageName, file, restoreContext = false)
+        editEveryFile(androidPackageName) { file ->
+            database.deleteMicroHooks(file, androidPackageName, recipeIds)
+        }
     }
 
-    fun deleteAll(androidPackageName: String) {
-        val file = locator.locate(androidPackageName)
-        if (!database.deleteAll(file)) return
-        fileAccess.prepare(androidPackageName, file, restoreContext = false)
+    fun deleteAll(androidPackageName: String) = editEveryFile(androidPackageName) { file ->
+        database.deleteAll(file)
     }
+
+    private fun primaryFile(androidPackageName: String): File? =
+        locate(androidPackageName).firstOrNull()
+
+    private fun readableFile(androidPackageName: String): File? =
+        locate(androidPackageName).firstOrNull(File::isFile) ?: primaryFile(androidPackageName)
+
+    /**
+     * Removals have to reach every location: a copy left behind by an earlier version would
+     * otherwise resurrect the removed overrides once the primary database is cleared.
+     */
+    private fun editEveryFile(androidPackageName: String, edit: (File) -> Boolean) {
+        locate(androidPackageName).forEach { file ->
+            if (edit(file)) fileAccess.prepare(androidPackageName, file, restoreContext = false)
+        }
+    }
+
+    private fun locate(androidPackageName: String): List<File> =
+        runCatching { locator.locate(androidPackageName) }.getOrDefault(emptyList())
 }

@@ -7,11 +7,14 @@ import ua.polodarb.xposed.info.needle.NeedleProtocol
 import ua.polodarb.xposed.logging.XposedLogger
 import java.io.File
 
-internal class NeedleRecipeStore(private val runtimeDirectory: File) {
+/**
+ * Reads the micro-hook recipes written by the app. [dbFiles] holds every location the database can
+ * live in, the primary one first; see [ua.polodarb.xposed.info.XposedRuntimeLocations].
+ */
+internal class NeedleRecipeStore(private val dbFiles: List<File>) {
 
     fun findForPackage(packageName: String): List<NeedleEnvelope> {
-        val dbFile = File(runtimeDirectory, XposedConstants.RUNTIME_OVERRIDES_DB_FILE_NAME)
-        if (!dbFile.exists()) return emptyList()
+        val dbFile = dbFiles.firstOrNull(File::isFile) ?: return emptyList()
 
         return runCatching {
             SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
