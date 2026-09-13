@@ -11,12 +11,11 @@ import ua.polodarb.gmsflags.analytics.CrashReporter
 import ua.polodarb.gmsflags.domain.apps.GetApplicationXposedScopeStatus
 import ua.polodarb.gmsflags.domain.apps.XposedScopeStatus
 import ua.polodarb.gmsflags.domain.hookstatus.GetHookStatus
-import ua.polodarb.gmsflags.domain.hookstatus.HookApplicationStatus
+import ua.polodarb.gmsflags.domain.hookstatus.HookHealth
 import ua.polodarb.gmsflags.domain.hookstatus.RestartHookTarget
-import ua.polodarb.gmsflags.domain.hookstatus.needsAttention
 
 /**
- * Restarts every target app whose hook needs attention, once per boot.
+ * Restarts every target app stuck on a stale hook session, once per boot.
  *
  * Runs through WorkManager rather than a plain background coroutine or a directly-started
  * foreground service: [BootCompletedReceiver] has no foreground presence of its own to keep this
@@ -24,6 +23,13 @@ import ua.polodarb.gmsflags.domain.hookstatus.needsAttention
  * `startForegroundService()` call from a broadcast receiver is denied outside a narrow exemption
  * window, and a plain background coroutine can be frozen mid-connection by the app freezer.
  * WorkManager's own executor already handles both.
+ *
+ * Only [HookHealth.RestartRequired] is acted on here, not every health the status screen flags as
+ * needing attention: a restart only ever fixes a stale session (the current override count no
+ * longer matching what that session loaded) - it does nothing for [HookHealth.Error],
+ * [HookHealth.Partial], or a compatibility warning, which are structural problems restarting can't
+ * touch. Restarting a target that a restart can't help would just force-stop it again on every
+ * single boot for no benefit.
  */
 class RestartAttentionHooksWorker(
     context: Context,
@@ -41,7 +47,7 @@ class RestartAttentionHooksWorker(
         }
 
         overview.applications
-            .filter(HookApplicationStatus::needsAttention)
+            .filter { application -> application.health == HookHealth.RestartRequired }
             .forEach { application ->
                 // A target the module isn't scoped to would never pick up the restart anyway.
                 if (isInScope(application.androidPackageName)) {
