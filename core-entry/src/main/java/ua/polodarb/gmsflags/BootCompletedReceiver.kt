@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 
 /**
@@ -22,10 +23,14 @@ class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
 
+        // Expedited so the system runs it ahead of every other app's own boot-time work queue,
+        // instead of waiting in line behind them for a regular JobScheduler slot.
         WorkManager.getInstance(context).enqueueUniqueWork(
             RESTART_ATTENTION_HOOKS_WORK_NAME,
             ExistingWorkPolicy.REPLACE,
-            OneTimeWorkRequestBuilder<RestartAttentionHooksWorker>().build(),
+            OneTimeWorkRequestBuilder<RestartAttentionHooksWorker>()
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build(),
         )
     }
 
