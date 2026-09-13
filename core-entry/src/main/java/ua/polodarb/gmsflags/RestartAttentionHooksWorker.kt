@@ -8,6 +8,8 @@ import androidx.work.WorkerParameters
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import ua.polodarb.gmsflags.analytics.CrashReporter
+import ua.polodarb.gmsflags.domain.apps.GetApplicationXposedScopeStatus
+import ua.polodarb.gmsflags.domain.apps.XposedScopeStatus
 import ua.polodarb.gmsflags.domain.hookstatus.GetHookStatus
 import ua.polodarb.gmsflags.domain.hookstatus.HookApplicationStatus
 import ua.polodarb.gmsflags.domain.hookstatus.RestartHookTarget
@@ -28,6 +30,7 @@ class RestartAttentionHooksWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(context, params), KoinComponent {
     private val getHookStatus: GetHookStatus by inject()
+    private val getApplicationXposedScopeStatus: GetApplicationXposedScopeStatus by inject()
     private val restartHookTarget: RestartHookTarget by inject()
     private val crashReporter: CrashReporter by inject()
 
@@ -40,11 +43,17 @@ class RestartAttentionHooksWorker(
         overview.applications
             .filter(HookApplicationStatus::needsAttention)
             .forEach { application ->
-                restartHookTarget(application.androidPackageName).onFailure(::logFailure)
+                // A target the module isn't scoped to would never pick up the restart anyway.
+                if (isInScope(application.androidPackageName)) {
+                    restartHookTarget(application.androidPackageName).onFailure(::logFailure)
+                }
             }
 
         return Result.success()
     }
+
+    private suspend fun isInScope(androidPackageName: String): Boolean =
+        getApplicationXposedScopeStatus(androidPackageName).getOrNull() == XposedScopeStatus.Included
 
     private fun logFailure(error: Throwable) {
         Log.e(TAG, "Failed to restart a hook needing attention after boot", error)
